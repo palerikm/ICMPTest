@@ -1,5 +1,6 @@
 #ifndef IPHELPER_H
 #define IPHELPER_H
+#include <stdint.h>
 
 typedef enum IPv6_ADDR_TYPES {IPv6_ADDR_NONE, 
                               IPv6_ADDR_ULA, 

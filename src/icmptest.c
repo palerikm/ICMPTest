@@ -118,11 +118,36 @@ static void *socketListen(void *ptr){
                         printf("\r \033[75C Recieved ICMP: (%i) ",config->numRcvdICMP);
                     }
                 }
+                if (ufds[i].revents & POLLERR) {
+                    struct msghdr msg;
+                    if(i == 0){
+                        if ((numbytes = recvmsg(config->sockfd, 
+                                                &msg, MSG_ERRQUEUE)) == -1) {
+                            perror("recvfrom (pollerr)");
+                            exit(1);
+                        }
+                        config->numRcvdICMP++;
+                        printf("\r \033[75C Recieved ICMP: (%i) ",config->numRcvdICMP);
+                    }
+                    if(i == 1){
+                        if ((numbytes = recvmsg(config->icmpSocket, 
+                                                &msg, MSG_ERRQUEUE)) == -1) {
+                            perror("recvfrom (pollerr icmp)");
+                            exit(1);
+                        }
+                        config->numRcvdICMP++;
+                        printf("\r \033[75C Recieved ICMP: (%i) ",config->numRcvdICMP);
+                    }
+                    //Do stuff with msghdr
+                }
             }
         }
     }
-}
-
+ }
+    
+    
+    
+    
 
 
 int main(int argc, char **argv)
@@ -131,6 +156,8 @@ int main(int argc, char **argv)
     
     pthread_t sendDataThread;
     pthread_t listenThread;
+
+    int i;
 
     memset(&config, 0, sizeof(config));
 
@@ -159,8 +186,15 @@ int main(int argc, char **argv)
         config.icmpSocket=socket(config.remoteAddr.ss_family, SOCK_DGRAM, IPPROTO_ICMPV6);
 
     if (config.icmpSocket < 0) {
-        perror("socket");
-        exit(1);
+        config.icmpSocket=socket(config.remoteAddr.ss_family, SOCK_RAW, IPPROTO_ICMP);
+        if (config.icmpSocket < 0) {
+            //No privileges to run raw sockets. Create new socket to send the probes on.
+            int val = 1;
+            perror("ICMP socket");
+            //icmpSocket = sockfd;
+            if (setsockopt (config.sockfd, SOL_IP, IP_RECVERR, &val, sizeof (val)) < 0)
+                error ("setsockopt IP_RECVERR");
+        }
     }
     
     //Start and listen to the sockets.
@@ -171,7 +205,7 @@ int main(int argc, char **argv)
     
     sleep(1);
     //Send a probe ackets with increasing TTLs
-    for(int i=1;i<30;i++){
+    for(i=1;i<30;i++){
         config.numSentProbe++;
         printf("\r \033[45C Probe sent: (%i) (ttl:%i)", config.numSentProbe, i);
         fflush(stdout);
