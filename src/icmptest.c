@@ -16,6 +16,8 @@
 #include <time.h>
 #include <pthread.h>
 
+#include<signal.h>
+
 #ifdef __linux
 #include <linux/types.h>	// required for linux/errqueue.h
 #include <linux/errqueue.h>	// SO_EE_ORIGIN_ICMP
@@ -111,8 +113,6 @@ static void *socketListen(void *ptr){
     int keyLen = 16;
     char md5[keyLen];
 
-
-
     //Normal send/recieve RTP socket..
     ufds[0].fd = config->sockfd;
     ufds[0].events = POLLIN | POLLERR;
@@ -186,26 +186,20 @@ static void *socketListen(void *ptr){
                     if (recvmsg(config->sockfd, &msg, MSG_ERRQUEUE ) == -1) {
 			//Ignore for now. Will get it later..
                         continue;
-                        
                     }    
                     for (cmsg = CMSG_FIRSTHDR(&msg); cmsg != NULL;
                          cmsg = CMSG_NXTHDR(&msg,cmsg)) {
                         if (cmsg->cmsg_level == IPPROTO_IP && cmsg->cmsg_type == IP_RECVERR){
                             struct sock_extended_err *ee;
-
                             ee = (struct sock_extended_err *) CMSG_DATA(cmsg);
                             
                             if (ee->ee_origin == SO_EE_ORIGIN_ICMP) {
-                                char src_str[INET6_ADDRSTRLEN];
-                                config->numRcvdICMP++;
-                                printf("\r \033[35C RX ICMP (%i) : %i ",i,config->numRcvdICMP);
-                                printf("\033[%iB",config->numRcvdICMP-1);
-                                printf("\n  <-  %s (ICMP type: %i)\033[K",
-                                       sockaddr_toString((struct sockaddr*)SO_EE_OFFENDER(ee),
-                                                         src_str,
-                                                         sizeof(src_str),
-                                                         false),ee->ee_type);
-                                printf("\033[%iA",config->numRcvdICMP);
+                                //Have mercy.. Must fix this
+                                struct sockaddr_in *addr = &((struct sockaddr_in*)SO_EE_OFFENDER(ee))->sin_addr;
+                                
+                                config->icmp_handler(config, 
+                                                     (struct sockaddr*)addr,
+                                                     ee->ee_type);
                             }
                         }
                     }
