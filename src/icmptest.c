@@ -16,6 +16,11 @@
 #include <time.h>
 #include <pthread.h>
 
+#ifdef __linux
+#include <linux/types.h>	// required for linux/errqueue.h
+#include <linux/errqueue.h>	// SO_EE_ORIGIN_ICMP
+#endif
+
 #include "iphelper.h"
 #include "sockethelper.h"
 
@@ -145,28 +150,56 @@ static void *socketListen(void *ptr){
                     }
                 }
 #ifdef __linux
-                if (ufds[i].revents & POLLERR) {
-                    struct msghdr msg;
-                    if(i == 0){
-                        if ((numbytes = recvmsg(config->sockfd, 
-                                                &msg, MSG_ERRQUEUE)) == -1) {
-                            perror("recvfrom (pollerr)");
-                            exit(1);
-                        }
-                        config->numRcvdICMP++;
-                        printf("\r \033[75C Recieved ICMP (POLLERR(%i)): (%i) ",i,config->numRcvdICMP);
-                    }
-                    if(i == 1){
-                        if ((numbytes = recvmsg(config->icmpSocket, 
-                                                &msg, MSG_ERRQUEUE)) == -1) {
-                            perror("recvfrom (pollerr icmp)");
-                            exit(1);
-                        }
-                        config->numRcvdICMP++;
-                        printf("\r \033[75C Recieved ICMP (POLLERR(%i)): (%i) ",i,config->numRcvdICMP);
-                    }
+                if (ufds[0].revents & POLLERR) {
                     //Do stuff with msghdr
+                    struct msghdr msg;
+                    struct sockaddr_in response;		// host answered IP_RECVERR
+                    char control_buf[1500];
+                    struct iovec iov;
+                    char buf[1500];
+                    struct cmsghdr *cmsg;
 
+                    memset(&msg, 0, sizeof(msg));
+                    msg.msg_name = &response;			// host
+                    msg.msg_namelen = sizeof(response);
+                    msg.msg_control = control_buf;
+                    msg.msg_controllen = sizeof(control_buf);
+                    iov.iov_base = buf;
+                    iov.iov_len = sizeof(buf);
+                    msg.msg_iov = &iov;
+                    msg.msg_iovlen = 1;
+               
+                    if (recvmsg(config->sockfd, &msg, MSG_ERRQUEUE ) == -1) {
+			//Ignore for now. Will get it later..
+                        continue;
+                        
+                    }    
+                    //printf("\ngott poll\n");
+                    //printf("ICMP? msg.msgcontrollen: %i ", msg.msg_controllen);
+                    for (cmsg = CMSG_FIRSTHDR(&msg); cmsg != NULL;
+                         cmsg = CMSG_NXTHDR(&msg,cmsg)) {
+                        if (cmsg->cmsg_level == IPPROTO_IP && cmsg->cmsg_type == IP_RECVERR){
+                            
+                            //printf(" cmsg type: %i! (IP_TTL:%i)\n", cmsg->cmsg_type, IP_RECVERR);
+                            struct sock_extended_err *ee;
+
+                            ee = (struct sock_extended_err *) CMSG_DATA(cmsg);
+                            
+                            if (ee->ee_origin == SO_EE_ORIGIN_ICMP) {
+                                //printf("ICMP!!!!");
+                                char src_str[INET6_ADDRSTRLEN];
+                                config->numRcvdICMP++;
+                                printf("\r \033[35C RX ICMP (%i) : %i ",i,config->numRcvdICMP);
+                                printf("\033[%iB",config->numRcvdICMP-1);
+                                printf("\n  <-  %s (ICMP type: %i)\033[K",
+                                       sockaddr_toString((struct sockaddr*)SO_EE_OFFENDER(ee),
+                                                         src_str,
+                                                         sizeof(src_str),
+                                                         false),ee->ee_type);
+                                printf("\033[%iA",config->numRcvdICMP);
+                            }
+                        }
+                    }
                 }
 #endif
             }
