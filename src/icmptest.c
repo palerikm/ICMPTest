@@ -118,6 +118,7 @@ static void *socketListen(void *ptr){
                         printf("\r \033[75C Recieved ICMP: (%i) ",config->numRcvdICMP);
                     }
                 }
+#ifdef __linux
                 if (ufds[i].revents & POLLERR) {
                     struct msghdr msg;
                     if(i == 0){
@@ -139,7 +140,9 @@ static void *socketListen(void *ptr){
                         printf("\r \033[75C Recieved ICMP: (%i) ",config->numRcvdICMP);
                     }
                     //Do stuff with msghdr
+
                 }
+#endif
             }
         }
     }
@@ -186,6 +189,7 @@ int main(int argc, char **argv)
         config.icmpSocket=socket(config.remoteAddr.ss_family, SOCK_DGRAM, IPPROTO_ICMPV6);
 
     if (config.icmpSocket < 0) {
+#ifdef __linux
         config.icmpSocket=socket(config.remoteAddr.ss_family, SOCK_RAW, IPPROTO_ICMP);
         if (config.icmpSocket < 0) {
             //No privileges to run raw sockets. Create new socket to send the probes on.
@@ -193,8 +197,11 @@ int main(int argc, char **argv)
             perror("ICMP socket");
             //icmpSocket = sockfd;
             if (setsockopt (config.sockfd, SOL_IP, IP_RECVERR, &val, sizeof (val)) < 0)
-                error ("setsockopt IP_RECVERR");
+                perror ("setsockopt IP_RECVERR");
         }
+#else
+        perror("ICMP socket");
+#endif
     }
     
     //Start and listen to the sockets.
