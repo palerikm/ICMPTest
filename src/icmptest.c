@@ -28,6 +28,7 @@
 #define MAXBUFLEN 2048
 #define MAX_LISTEN_SOCKETS 10
 
+int lines; //Just to gracefully hanle SIGINT
 
 struct test_config{
     
@@ -40,17 +41,48 @@ struct test_config{
     int numRcvdPkts;
     int numSentProbe;
     int numRcvdICMP;
+    void (*data_handler)(struct test_config *, struct sockaddr *, 
+                         unsigned char *, int);
+
+    void (*icmp_handler)(struct test_config *, struct sockaddr *, 
+                         int);
 };
 
+static void data_handler(struct test_config *config, struct sockaddr *saddr, 
+                         unsigned char *buf, int len){
 
+    config->numRcvdPkts++;
+    printf("\r \033[7C RX: %i ", config->numRcvdPkts);
+}
+
+
+static void icmp_handler(struct test_config *config, 
+                         struct sockaddr *saddr, 
+                         int icmpType){
+    
+    char src_str[INET6_ADDRSTRLEN];
+
+    config->numRcvdICMP++;
+    printf("\r \033[35C RX ICMP: %i ",config->numRcvdICMP);
+    printf("\033[%iB",config->numRcvdICMP);
+    printf("\n  <-  %s (ICMP type:%i)\033[K",
+           inet_ntop(AF_INET, saddr, src_str,INET_ADDRSTRLEN),
+           icmpType);
+    printf("\033[%iA",config->numRcvdICMP);
+
+    //For graefull SIGINT
+    lines = config->numRcvdICMP;
+}
 
 static void *sendData(struct test_config *config)
 {
     struct timespec timer;
     struct timespec remaining;
 
+    //How fast? Pretty fast..
     timer.tv_sec = 0;
-    timer.tv_nsec = 50000000;
+    //timer.tv_nsec = 50000000;
+    timer.tv_nsec = 5000000;
     
     for(;;) {
         nanosleep(&timer, &remaining);
@@ -92,8 +124,6 @@ static void *socketListen(void *ptr){
         ufds[1].events = POLLIN | POLLERR;
         numSockets++;
     }
-
-   
     addr_len = sizeof their_addr;
     
     while(1){
@@ -113,40 +143,24 @@ static void *socketListen(void *ptr){
                             perror("recvfrom");
                             exit(1);
                         }
-                        config->numRcvdPkts++;
-                        printf("\r \033[7C RX: %i ", config->numRcvdPkts);
+                        config->data_handler(config, (struct sockaddr *)&their_addr, buf, numbytes);
                     }
-                    if(i == 1){
+                    if(i == 1){//This is the ICMP socket
                         struct ip *ip_packet, *inner_ip_packet;
                         struct icmp *icmp_packet;
-                        struct sockaddr_storage src_addr;
-                        char src_str[INET6_ADDRSTRLEN];
-
-                        int j;
+                        
                         if ((numbytes = recvfrom(config->icmpSocket, buf, 
                                                  MAXBUFLEN , 0, 
                                                  (struct sockaddr *)&their_addr, &addr_len)) == -1) {
                             perror("recvfrom");
                             exit(1);
                         }
-
                         //Try to get something out of the potential ICMP packet
                         ip_packet = (struct ip *) &buf;
                         icmp_packet = (struct icmp *) (buf + (ip_packet->ip_hl << 2));
                         inner_ip_packet = &icmp_packet->icmp_ip;
-                        
-                        sockaddr_initFromIPv4String((struct sockaddr_in*)&src_addr,
-                                                    inet_ntop(AF_INET, &ip_packet->ip_src, src_str,INET_ADDRSTRLEN));
-                        
-                        config->numRcvdICMP++;
-                        printf("\r \033[35C RX ICMP (%i) : %i ",i,config->numRcvdICMP);
-                        printf("\033[%iB",config->numRcvdICMP-1);
-                        printf("\n  <-  %s (ICMP type:%i)\033[K",
-                               sockaddr_toString((struct sockaddr*)&src_addr,
-                                                 src_str,
-                                                 sizeof(src_str),
-                                                 false),icmp_packet->icmp_type);
-                        printf("\033[%iA",config->numRcvdICMP);
+                                                
+                        config->icmp_handler(config, (struct sockaddr *)&ip_packet->ip_src, icmp_packet->icmp_type);
                     }
                 }
 #ifdef __linux
@@ -174,19 +188,14 @@ static void *socketListen(void *ptr){
                         continue;
                         
                     }    
-                    //printf("\ngott poll\n");
-                    //printf("ICMP? msg.msgcontrollen: %i ", msg.msg_controllen);
                     for (cmsg = CMSG_FIRSTHDR(&msg); cmsg != NULL;
                          cmsg = CMSG_NXTHDR(&msg,cmsg)) {
                         if (cmsg->cmsg_level == IPPROTO_IP && cmsg->cmsg_type == IP_RECVERR){
-                            
-                            //printf(" cmsg type: %i! (IP_TTL:%i)\n", cmsg->cmsg_type, IP_RECVERR);
                             struct sock_extended_err *ee;
 
                             ee = (struct sock_extended_err *) CMSG_DATA(cmsg);
                             
                             if (ee->ee_origin == SO_EE_ORIGIN_ICMP) {
-                                //printf("ICMP!!!!");
                                 char src_str[INET6_ADDRSTRLEN];
                                 config->numRcvdICMP++;
                                 printf("\r \033[35C RX ICMP (%i) : %i ",i,config->numRcvdICMP);
@@ -210,18 +219,23 @@ static void *socketListen(void *ptr){
     
     
     
-
+void done(){
+    printf("\033[%iB",lines);
+    printf("\nDONE!\n");
+    exit(0);
+}
 
 int main(int argc, char **argv)
 {
     struct test_config config;
-    
     pthread_t sendDataThread;
     pthread_t listenThread;
 
     int i;
-
+    signal(SIGINT, done);
     memset(&config, 0, sizeof(config));
+    config.icmp_handler = icmp_handler;
+    config.data_handler = data_handler;
 
     if(!getRemoteIpAddr((struct sockaddr *)&config.remoteAddr, 
                             argv[2], 
@@ -239,7 +253,6 @@ int main(int argc, char **argv)
         exit(1);
     }
     /* Setting up UDP socket and a ICMP sockhandle */
-
     config.sockfd = createLocalUDPSocket(config.remoteAddr.ss_family, (struct sockaddr *)&config.localAddr, 0);
 
     if(config.remoteAddr.ss_family == AF_INET)
@@ -251,14 +264,18 @@ int main(int argc, char **argv)
 #ifdef __linux
         config.icmpSocket=socket(config.remoteAddr.ss_family, SOCK_RAW, IPPROTO_ICMP);
         if (config.icmpSocket < 0) {
-            //No privileges to run raw sockets. Use old and recieve them with POLLERR
+            //No privileges to run raw sockets. Use old socket and recieve ICMP with POLLERR
+            //Warning: Remeber to get them out of the queue with readmsg() otherwise kernel
+            //will close down socket?
             int val = 1;
-            perror("ICMP socket");
-            if (setsockopt (config.sockfd, SOL_IP, IP_RECVERR, &val, sizeof (val)) < 0)
+            if (setsockopt (config.sockfd, SOL_IP, IP_RECVERR, &val, sizeof (val)) < 0){
                 perror ("setsockopt IP_RECVERR");
+                exit(1);
+            }
         }
 #else
         perror("ICMP socket");
+        exit(1);
 #endif
     }
     
@@ -268,9 +285,9 @@ int main(int argc, char **argv)
     //Start a thread that sends packet to the destination (Simulate RTP)
     pthread_create(&sendDataThread, NULL, (void *)sendData, &config);
     
-    sleep(1);
     //Send a probe ackets with increasing TTLs
     for(i=1;i<15;i++){
+        sleep(1);
         config.numSentProbe++;
         printf("\r \033[16C Probe: %i (ttl:%i)", config.numSentProbe, i);
         fflush(stdout);
@@ -280,12 +297,10 @@ int main(int argc, char **argv)
                    (struct sockaddr *)&config.remoteAddr,
                    false,
                    i);
-        sleep(1);
-    }
         
-    sleep(2);
-    printf("\033[%iB",config.numRcvdICMP);
-    printf("\nDONE!\n");
-    exit(0);
-    //done
+    }
+    
+    //Just wait a bit
+    sleep(1);
+    done();
 }
