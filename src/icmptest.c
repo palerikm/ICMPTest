@@ -66,7 +66,7 @@ static void icmp_handler(struct test_config *config,
 
     config->numRcvdICMP++;
     printf("\r \033[35C RX ICMP: %i ",config->numRcvdICMP);
-    printf("\033[%iB",config->numRcvdICMP);
+    printf("\033[%iB",config->numRcvdICMP-1);
     printf("\n  <-  %s (ICMP type:%i)\033[K",
            inet_ntop(AF_INET, saddr, src_str,INET_ADDRSTRLEN),
            icmpType);
@@ -140,8 +140,8 @@ static void *socketListen(void *ptr){
                         if ((numbytes = recvfrom(config->sockfd, buf, 
                                                  MAXBUFLEN , 0, 
                                                  (struct sockaddr *)&their_addr, &addr_len)) == -1) {
-                            perror("recvfrom");
-                            exit(1);
+                            perror("recvfrom (data)");
+                            //exit(1);
                         }
                         config->data_handler(config, (struct sockaddr *)&their_addr, buf, numbytes);
                     }
@@ -152,7 +152,7 @@ static void *socketListen(void *ptr){
                         if ((numbytes = recvfrom(config->icmpSocket, buf, 
                                                  MAXBUFLEN , 0, 
                                                  (struct sockaddr *)&their_addr, &addr_len)) == -1) {
-                            perror("recvfrom");
+                            perror("recvfrom (icmp)");
                             exit(1);
                         }
                         //Try to get something out of the potential ICMP packet
