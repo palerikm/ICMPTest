@@ -113,15 +113,18 @@ static void *socketListen(void *ptr){
     int keyLen = 16;
     char md5[keyLen];
 
+    const int dataSock = 0;
+    const int icmpSock = 1;
+
     //Normal send/recieve RTP socket..
-    ufds[0].fd = config->sockfd;
-    ufds[0].events = POLLIN | POLLERR;
+    ufds[dataSock].fd = config->sockfd;
+    ufds[dataSock].events = POLLIN | POLLERR;
     numSockets++;
 
     //Listen on the ICMP socket if it exists
     if(config->icmpSocket != 0){
-        ufds[1].fd = config->icmpSocket;
-        ufds[1].events = POLLIN | POLLERR;
+        ufds[icmpSock].fd = config->icmpSocket;
+        ufds[icmpSock].events = POLLIN | POLLERR;
         numSockets++;
     }
     addr_len = sizeof their_addr;
@@ -133,7 +136,6 @@ static void *socketListen(void *ptr){
         } else if (rv == 0) {
             printf("Timeout occurred! (Should not happen)\n");
         } else {
-            // check for events on s1:
             for(i=0;i<numSockets;i++){
                 if (ufds[i].revents & POLLIN) {
                     if(i == 0){
@@ -141,11 +143,10 @@ static void *socketListen(void *ptr){
                                                  MAXBUFLEN , 0, 
                                                  (struct sockaddr *)&their_addr, &addr_len)) == -1) {
                             perror("recvfrom (data)");
-                            //exit(1);
                         }
                         config->data_handler(config, (struct sockaddr *)&their_addr, buf, numbytes);
                     }
-                    if(i == 1){//This is the ICMP socket
+                    if(i == icmpSock){//This is the ICMP socket
                         struct ip *ip_packet, *inner_ip_packet;
                         struct icmp *icmp_packet;
                         
@@ -164,7 +165,7 @@ static void *socketListen(void *ptr){
                     }
                 }
 #ifdef __linux
-                if (ufds[0].revents & POLLERR) {
+                if (ufds[dataSock].revents & POLLERR) {
                     //Do stuff with msghdr
                     struct msghdr msg;
                     struct sockaddr_in response;		// host answered IP_RECVERR
