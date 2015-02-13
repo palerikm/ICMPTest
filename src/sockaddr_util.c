@@ -45,6 +45,10 @@ or implied, of Cisco.
 #include <unistd.h>
 
 
+#ifdef ANDROID
+typedef u_int16_t   in_port_t;
+#endif
+
 
 #include "sockaddr_util.h"
 
@@ -70,7 +74,6 @@ void sockaddr_initAsIPv6Any(struct sockaddr_in6 * sa)
     memcpy( &(sa->sin6_addr.s6_addr), &ipv6any,
             sizeof(struct in6_addr));
 }
-
 
 bool sockaddr_initFromIPv6String(struct sockaddr_in6 *sa,
                                  const char *addr_str)
