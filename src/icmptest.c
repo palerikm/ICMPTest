@@ -23,6 +23,36 @@
 #include <linux/errqueue.h>	// SO_EE_ORIGIN_ICMP
 #endif
 
+#ifdef ANDROID
+#include <jni.h>
+#include <android/log.h>
+#include "stdio.h"
+#define TAG "hiut"
+#define LOGV(...) __android_log_print(ANDROID_LOG_VERBOSE, TAG, __VA_ARGS__)
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
+
+#define ESC_7C 	""
+#define ESC_35C ""
+#define ESC_16C ""
+#define ESC_iB 	""
+#define ESC_iA  ""
+#define ESC_K   ""
+
+#else
+#define LOGI(...) printf(__VA_ARGS__)
+#define LOGV(...) printf(__VA_ARGS__)
+#define LOGE(...) printf(__VA_ARGS__)
+
+#define ESC_7C 	"\033[7C"
+#define ESC_35C "\033[35C"
+#define ESC_16C "\033[16C"
+#define ESC_iB 	"\033[%iB"
+#define ESC_iA  "\033[%iA"
+#define ESC_K   "\033[K"
+
+#endif
+
 #include "iphelper.h"
 #include "sockethelper.h"
 
@@ -54,7 +84,7 @@ static void data_handler(struct test_config *config, struct sockaddr *saddr,
                          unsigned char *buf, int len){
 
     config->numRcvdPkts++;
-    printf("\r \033[7C RX: %i ", config->numRcvdPkts);
+    LOGI("\r " ESC_7C " RX: %i ", config->numRcvdPkts);
 }
 
 
@@ -65,12 +95,12 @@ static void icmp_handler(struct test_config *config,
     char src_str[INET6_ADDRSTRLEN];
 
     config->numRcvdICMP++;
-    printf("\r \033[35C RX ICMP: %i ",config->numRcvdICMP);
-    printf("\033[%iB",config->numRcvdICMP-1);
-    printf("\n  <-  %s (ICMP type:%i)\033[K",
+    LOGI("\r " ESC_35C " RX ICMP: %i ",config->numRcvdICMP);
+    LOGI(ESC_iB,config->numRcvdICMP-1);
+    LOGI("\n  <-  %s (ICMP type:%i)" ESC_K,
            inet_ntop(AF_INET, saddr, src_str,INET_ADDRSTRLEN),
            icmpType);
-    printf("\033[%iA",config->numRcvdICMP);
+    LOGI(ESC_iA,config->numRcvdICMP);
 
     //For graefull SIGINT
     lines = config->numRcvdICMP;
@@ -89,8 +119,10 @@ static void *sendData(struct test_config *config)
     for(;;) {
         nanosleep(&timer, &remaining);
         config->numSentPkts++;
-        printf("\rTX: %i", config->numSentPkts);
+#ifndef ANDROID
+        LOGI("\rTX: %i", config->numSentPkts);
         fflush(stdout);
+#endif
         sendPacket(config->sockfd,
                        (uint8_t *)"ICMP_Test",
                        9,
@@ -132,9 +164,9 @@ static void *socketListen(void *ptr){
     while(1){
         rv = poll(ufds, numSockets, -1);
         if (rv == -1) {
-            perror("poll"); // error occurred in poll()
+            LOGE("poll"); // error occurred in poll()
         } else if (rv == 0) {
-            printf("Timeout occurred! (Should not happen)\n");
+            LOGI("Timeout occurred! (Should not happen)\n");
         } else {
             for(i=0;i<numSockets;i++){
                 if (ufds[i].revents & POLLIN) {
@@ -142,7 +174,7 @@ static void *socketListen(void *ptr){
                         if ((numbytes = recvfrom(config->sockfd, buf, 
                                                  MAXBUFLEN , 0, 
                                                  (struct sockaddr *)&their_addr, &addr_len)) == -1) {
-                            perror("recvfrom (data)");
+                            LOGE("recvfrom (data)");
                         }
                         config->data_handler(config, (struct sockaddr *)&their_addr, buf, numbytes);
                     }
@@ -153,7 +185,7 @@ static void *socketListen(void *ptr){
                         if ((numbytes = recvfrom(config->icmpSocket, buf, 
                                                  MAXBUFLEN , 0, 
                                                  (struct sockaddr *)&their_addr, &addr_len)) == -1) {
-                            perror("recvfrom (icmp)");
+                            LOGE("recvfrom (icmp)");
                             exit(1);
                         }
                         //Try to get something out of the potential ICMP packet
@@ -164,7 +196,7 @@ static void *socketListen(void *ptr){
                         config->icmp_handler(config, (struct sockaddr *)&ip_packet->ip_src, icmp_packet->icmp_type);
                     }
                 }
-#ifdef __linux
+#if defined(__linux) || defined(ANDROID)
                 if (ufds[dataSock].revents & POLLERR) {
                     //Do stuff with msghdr
                     struct msghdr msg;
@@ -215,27 +247,32 @@ static void *socketListen(void *ptr){
     
     
 void done(){
-    printf("\033[%iB",lines);
-    printf("\nDONE!\n");
+    LOGI(ESC_iB,lines);
+    LOGI("\nDONE!\n");
     exit(0);
 }
 
-int main(int argc, char **argv)
+int icmptest(int argc, char **argv)
 {
     struct test_config config;
     pthread_t sendDataThread;
     pthread_t listenThread;
 
     int i;
+#ifndef ANDROID
     signal(SIGINT, done);
+#endif
+	LOGI("entering icmptest");
+
     memset(&config, 0, sizeof(config));
     config.icmp_handler = icmp_handler;
     config.data_handler = data_handler;
 
+	
     if(!getRemoteIpAddr((struct sockaddr *)&config.remoteAddr, 
                             argv[2], 
                         3478)){
-        printf("Error getting remote IPaddr");
+        LOGI("Error getting remote IPaddr");
         exit(1);
         }
     
@@ -244,19 +281,24 @@ int main(int argc, char **argv)
                                 config.remoteAddr.ss_family, 
                                 IPv6_ADDR_NORMAL, 
                                 false)){
-        printf("Error local getting IPaddr on %s\n", argv[1]);
+        LOGI("Error local getting IPaddr on %s\n", argv[1]);
         exit(1);
     }
     /* Setting up UDP socket and a ICMP sockhandle */
     config.sockfd = createLocalUDPSocket(config.remoteAddr.ss_family, (struct sockaddr *)&config.localAddr, 0);
 
+#ifndef ANDROID
     if(config.remoteAddr.ss_family == AF_INET)
         config.icmpSocket=socket(config.remoteAddr.ss_family, SOCK_DGRAM, IPPROTO_ICMP);
     else
         config.icmpSocket=socket(config.remoteAddr.ss_family, SOCK_DGRAM, IPPROTO_ICMPV6);
+#else
+	config.icmpSocket = -1;
+#endif		
 
     if (config.icmpSocket < 0) {
-#ifdef __linux
+		LOGI("Try to create raw socket or go with RECVRR.");
+#if defined(__linux) || defined(ANDROID)
         config.icmpSocket=socket(config.remoteAddr.ss_family, SOCK_RAW, IPPROTO_ICMP);
         if (config.icmpSocket < 0) {
             //No privileges to run raw sockets. Use old socket and recieve ICMP with POLLERR
@@ -264,12 +306,12 @@ int main(int argc, char **argv)
             //will close down socket?
             int val = 1;
             if (setsockopt (config.sockfd, SOL_IP, IP_RECVERR, &val, sizeof (val)) < 0){
-                perror ("setsockopt IP_RECVERR");
+                LOGE("setsockopt IP_RECVERR");
                 exit(1);
             }
         }
 #else
-        perror("ICMP socket");
+        LOGE("ICMP socket");
         exit(1);
 #endif
     }
@@ -284,7 +326,7 @@ int main(int argc, char **argv)
     for(i=1;i<15;i++){
         sleep(1);
         config.numSentProbe++;
-        printf("\r \033[16C Probe: %i (ttl:%i)", config.numSentProbe, i);
+        LOGI("\r " ESC_16C " Probe: %i (ttl:%i)", config.numSentProbe, i);
         fflush(stdout);
         sendPacket(config.sockfd,
                    (uint8_t *)"ICMP_Test_TTL",
@@ -299,3 +341,28 @@ int main(int argc, char **argv)
     sleep(1);
     done();
 }
+
+#ifdef ANDROID
+int traceroute(const char* hostname, int port)
+{
+	char *argv[3];
+	int argc = 3;
+	
+	argv[1] = (char*)malloc(1024);
+	argv[2] = (char*)malloc(1024);
+	strcpy(argv[1], "wlan0");
+	strcpy(argv[2], hostname);
+
+	icmptest(argc, argv);
+	
+	free(argv[1]);
+	free(argv[2]);
+	return 0; 
+}
+
+#else
+int main(int argc, char **argv)
+{
+	return icmptest(argc, argv);
+}
+#endif
