@@ -340,6 +340,8 @@ int icmptest(int argc, char **argv)
     //Just wait a bit
     sleep(1);
     done();
+    //done exits...
+    return 0;
 }
 
 #ifdef ANDROID
@@ -366,3 +368,4 @@ int main(int argc, char **argv)
 	return icmptest(argc, argv);
 }
 #endif
+
